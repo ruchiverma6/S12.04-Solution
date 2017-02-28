@@ -18,21 +18,27 @@ package com.example.android.sunshine.sync;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.text.format.DateUtils;
 import android.util.Log;
 
+import com.example.android.sunshine.MainActivity;
 import com.example.android.sunshine.data.SunshinePreferences;
 import com.example.android.sunshine.data.WeatherContract;
 import com.example.android.sunshine.utilities.NetworkUtils;
 import com.example.android.sunshine.utilities.NotificationUtils;
 import com.example.android.sunshine.utilities.OpenWeatherJsonUtils;
+import com.example.android.sunshine.utilities.SunshineDateUtils;
+import com.example.android.sunshine.utilities.SunshineWeatherUtils;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.PendingResult;
 import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
 import com.google.android.gms.wearable.Wearable;
@@ -41,8 +47,17 @@ import java.net.URL;
 
 public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
         GoogleApiClient.OnConnectionFailedListener {
+    private static final String WEATHER_IMAGE_ID_KEY = "weatherImageId";
+    private static final String DATE_STRING_KEY = "dateString";
+    private static final String WEATHER_HIGH_TEMPERATURE = "highTemperature";
+    private static final String WEATHER_LOW_TEMPERATURE = "lowTemperature";
     static GoogleApiClient mGoogleApiClient;
     private static final String TAG = SunshineSyncTask.class.getSimpleName();
+    static int weatherImageId;
+    static String highString;
+    static String dateString;
+    static String lowString;
+
 
     /**
      * Performs the network request for updated weather, parses the JSON from that request, and
@@ -53,32 +68,7 @@ public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
      * @param context Used to access utility methods and the ContentResolver
      */
     synchronized public static void syncWeather(Context context) {
-         mGoogleApiClient = new GoogleApiClient.Builder(context)
-                .addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
-                    @Override
-                    public void onConnected(Bundle connectionHint) {
-                        Log.d(TAG, "onConnected: " + connectionHint);
-                        PutDataMapRequest putDataMapReq = PutDataMapRequest.create("/count");
-                        putDataMapReq.getDataMap().putInt("",2);
-                        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-                        PendingResult<DataApi.DataItemResult> pendingResult =
-                                Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
-                    }
-                    @Override
-                    public void onConnectionSuspended(int cause) {
-                        Log.d(TAG, "onConnectionSuspended: " + cause);
-                    }
-                })
-                .addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
-                    @Override
-                    public void onConnectionFailed(ConnectionResult result) {
-                        Log.d(TAG, "onConnectionFailed: " + result);
-                    }
-                })
-                // Request access only to the Wearable API
-                .addApi(Wearable.API)
-                .build();
-        mGoogleApiClient.connect();
+
         try {
             /*
              * The getUrl method will return the URL that we need to get the forecast JSON for the
@@ -114,6 +104,10 @@ public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
                 sunshineContentResolver.bulkInsert(
                         WeatherContract.WeatherEntry.CONTENT_URI,
                         weatherValues);
+
+
+
+                sendWeatherDataToWear(context);
 
                 /*
                  * Finally, after we insert data into the ContentProvider, determine whether or not
@@ -153,6 +147,42 @@ public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
         }
     }
 
+    private static void sendWeatherDataToWear(final Context context) {
+        mGoogleApiClient = new GoogleApiClient.Builder(context)
+                .addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
+                    @Override
+                    public void onConnected(Bundle connectionHint) {
+                        Log.d(TAG, "onConnected: " + connectionHint);
+                        getWeatherDataForWear(context);
+                        PutDataMapRequest putDataMapReq = PutDataMapRequest.create("/weatherdata");
+                        DataMap dataMap= putDataMapReq.getDataMap();
+                        dataMap.putInt(WEATHER_IMAGE_ID_KEY,weatherImageId);
+                        dataMap.putString(DATE_STRING_KEY,dateString);
+                        dataMap.putString(WEATHER_HIGH_TEMPERATURE,highString);
+                        dataMap.putString(WEATHER_LOW_TEMPERATURE,lowString);
+                        dataMap.putLong("timestamp",System.currentTimeMillis());
+                        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+                        putDataReq.setUrgent();
+                        PendingResult<DataApi.DataItemResult> pendingResult =
+                                Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
+                    }
+                    @Override
+                    public void onConnectionSuspended(int cause) {
+                        Log.d(TAG, "onConnectionSuspended: " + cause);
+                    }
+                })
+                .addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
+                    @Override
+                    public void onConnectionFailed(ConnectionResult result) {
+                        Log.d(TAG, "onConnectionFailed: " + result);
+                    }
+                })
+                // Request access only to the Wearable API
+                .addApi(Wearable.API)
+                .build();
+        mGoogleApiClient.connect();
+    }
+
     @Override
     public void onConnected(@Nullable Bundle bundle) {
 
@@ -166,5 +196,45 @@ public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
 
+    }
+
+    private static void getWeatherDataForWear(Context context){
+
+        Uri forecastQueryUri = WeatherContract.WeatherEntry.CONTENT_URI;
+        String sortOrder = WeatherContract.WeatherEntry.COLUMN_DATE + " ASC";
+        String selection = WeatherContract.WeatherEntry.getSqlSelectForTodayOnwards();
+
+        Cursor weatherCursor = context.getContentResolver().query(forecastQueryUri, MainActivity.MAIN_FORECAST_PROJECTION,selection,null,sortOrder);
+        int weatherId=-1;
+        long dateInMillis=0;
+        double highInCelsius=0;
+        double lowInCelsius=0;
+        if(null!=weatherCursor && weatherCursor.moveToFirst()) {
+             weatherId = weatherCursor.getInt(MainActivity.INDEX_WEATHER_CONDITION_ID);
+             dateInMillis = weatherCursor.getLong(MainActivity.INDEX_WEATHER_DATE);
+            highInCelsius = weatherCursor.getDouble(MainActivity.INDEX_WEATHER_MAX_TEMP);
+            lowInCelsius = weatherCursor.getDouble(MainActivity.INDEX_WEATHER_MIN_TEMP);
+        }
+        weatherImageId = SunshineWeatherUtils
+                .getLargeArtResourceIdForWeatherCondition(weatherId);
+
+
+
+         /* Get human readable string using our utility method */
+         dateString = SunshineDateUtils.getFriendlyDateString(context, dateInMillis, false);
+
+        /*
+          * If the user's preference for weather is fahrenheit, formatTemperature will convert
+          * the temperature. This method will also append either °C or °F to the temperature
+          * String.
+          */
+         highString = SunshineWeatherUtils.formatTemperature(context, highInCelsius);
+
+        /*
+          * If the user's preference for weather is fahrenheit, formatTemperature will convert
+          * the temperature. This method will also append either °C or °F to the temperature
+          * String.
+          */
+         lowString = SunshineWeatherUtils.formatTemperature(context, lowInCelsius);
     }
 }
