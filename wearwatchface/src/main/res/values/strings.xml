@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Wearwatchface</string>
+    <string name="celcius">\u00B0</string>
 </resources>

@@ -1,13 +1,19 @@
 package com.example.android.sunshine;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
+import android.support.wearable.watchface.WatchFaceStyle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 
@@ -26,7 +32,11 @@ import com.google.android.gms.wearable.MessageApi;
 import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.Wearable;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.Set;
+import java.util.TimeZone;
 
 public class AnalogWatchFaceService extends CanvasWatchFaceService {
     private static final String TAG = AnalogWatchFaceService.class.getSimpleName();
@@ -37,7 +47,7 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
     private static final String DATE_STRING_KEY = "dateString";
     private static final String WEATHER_HIGH_TEMPERATURE = "highTemperature";
     private static final String WEATHER_LOW_TEMPERATURE = "lowTemperature";
-    public static final String WEATHER_INFO_CAPABILITIES="weather_info";
+    public static final String WEATHER_INFO_CAPABILITIES = "weather_info";
     private String weatherInfoNodeId;
 
     public AnalogWatchFaceService() {
@@ -52,11 +62,27 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
 
     private class Engine extends CanvasWatchFaceService.Engine implements GoogleApiClient.ConnectionCallbacks,
             GoogleApiClient.OnConnectionFailedListener {
-
+        private int width;
+        private int height;
         private int weatherImageId;
         private String highTemperature;
         private String lowTemperature;
         private String dateString;
+        private Calendar mCalendar;
+        private boolean mRegisteredTimeZoneReceiver = false;
+        private int backGroundColor;
+        private int whiteTextColor;
+        private int dateTextColor;
+        private Paint mBackGroundPaint;
+        private Paint hourPaint;
+        private Paint minPaint;
+        private Paint datePaint;
+        private Paint weatherIconPaint;
+        private Paint highTempPaint;
+        private Paint lowTemperaturePaint;
+        private Paint horizontalBaseLinePaint;
+        private TimeZone mTimeZone;
+        private Bitmap mWeatherIconBitmap;
 
         public Engine() {
             super();
@@ -65,6 +91,7 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onAmbientModeChanged(boolean inAmbientMode) {
             super.onAmbientModeChanged(inAmbientMode);
+            invalidate();
         }
 
         @Override
@@ -80,14 +107,65 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
-
+            setWatchFaceStyle(new WatchFaceStyle.Builder(AnalogWatchFaceService.this)
+                    .setCardPeekMode(WatchFaceStyle.PEEK_MODE_SHORT)
+                    .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
+                    .setShowSystemUiTime(false)
+                    .build());
+            mCalendar=Calendar.getInstance();
+            mTimeZone=TimeZone.getDefault();
+            mCalendar.setTimeZone(mTimeZone);
             mGoogleApiClient = new GoogleApiClient.Builder(AnalogWatchFaceService.this)
                     .addApi(Wearable.API)
                     .addConnectionCallbacks(this)
                     .addOnConnectionFailedListener(this)
                     .build();
             mGoogleApiClient.connect();
+            mBackGroundPaint = new Paint();
+            backGroundColor = getResources().getColor(R.color.colorPrimaryDark);
+            whiteTextColor = Color.WHITE;
+            dateTextColor = Color.GRAY;
+
+            hourPaint=new Paint();
+            hourPaint.setColor(whiteTextColor);
+            hourPaint.setTypeface(Typeface.SANS_SERIF);
+            hourPaint.setTextSize(getResources().getDimension(R.dimen.time_text_size));
+
+            datePaint=new Paint();
+            datePaint.setColor(whiteTextColor);
+            datePaint.setTypeface(Typeface.SANS_SERIF);
+            datePaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
+
+            horizontalBaseLinePaint=new Paint();
+            horizontalBaseLinePaint.setColor(whiteTextColor);
+
+            weatherIconPaint=new Paint();
+            highTempPaint=new Paint();
+            highTempPaint.setColor(whiteTextColor);
+            highTempPaint.setTypeface(Typeface.SANS_SERIF);
+            highTempPaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
+
+
+
+            lowTemperaturePaint=new Paint();
+            lowTemperaturePaint.setColor(whiteTextColor);
+            lowTemperaturePaint.setTypeface(Typeface.SANS_SERIF);
+            lowTemperaturePaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
+            highTemperature="00"+getResources().getString(R.string.celcius);
+            lowTemperature="00"+getResources().getString(R.string.celcius);
+
         }
+
+        private void drawBackGround(Canvas canvas) {
+            mBackGroundPaint.setColor(backGroundColor);
+            mBackGroundPaint.setStyle(Paint.Style.FILL);
+            canvas.drawRect(0, 0, width,height,mBackGroundPaint);
+
+        }
+
+
+
+
 
         @Override
         public void onDestroy() {
@@ -107,7 +185,39 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
             super.onDraw(canvas, bounds);
+            width = bounds.width();
+            height=bounds.height();
+            drawBackGround(canvas);
+            drawTime(canvas);
+
+
         }
+
+        private void drawTime(Canvas canvas) {
+            String time = String.format("%02d" , mCalendar.get(Calendar.HOUR_OF_DAY))+":"+
+                    String.format("%02d" , mCalendar.get(Calendar.MINUTE));
+            int centerX=width/2;
+            int centerY=height/2;
+            int xPos=centerX/2;
+            int yPos=centerY/2;
+            canvas.drawText(time,xPos,yPos,hourPaint);
+           String dayDate= getDate();
+            canvas.drawText(dayDate,xPos-20,yPos+50,datePaint);
+            canvas.drawLine(centerX-20,centerY+20,centerX+40,centerY+20,horizontalBaseLinePaint);
+            canvas.drawText(highTemperature,centerX-30,centerY+15+40,datePaint);
+            canvas.drawText(lowTemperature,centerX-30+40,centerY+15+40,datePaint);
+            if(null!=mWeatherIconBitmap) {
+                canvas.drawBitmap(mWeatherIconBitmap, centerX - 30 - mWeatherIconBitmap.getWidth(), centerY + 15, weatherIconPaint);
+            }
+        }
+
+        private String getDate() {
+         Date date=   mCalendar.getTime();
+            SimpleDateFormat simpleDateFormat=new SimpleDateFormat("E, MMM d yyyy");
+            String dateString = simpleDateFormat.format(date).toUpperCase();
+            return dateString;
+        }
+
 
         @Override
         public void onConnected(@Nullable Bundle bundle) {
@@ -119,9 +229,9 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
                     Log.v(TAG, "dataReceived 2");
                     for (DataEvent dataEvent : dataEventBuffer) {
                         //= if (dataEvent.getType() == DataEvent.TYPE_CHANGED) {
-                        DataItem dataItem=dataEvent.getDataItem();
-                        if(dataItem.getUri().getPath().compareTo("/weatherdata")==0){
-                            DataMap dataMap= DataMapItem.fromDataItem(dataItem).getDataMap();
+                        DataItem dataItem = dataEvent.getDataItem();
+                        if (dataItem.getUri().getPath().compareTo("/weatherdata") == 0) {
+                            DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
                             retrieveData(dataMap);
                         }
                         //   }
@@ -129,20 +239,23 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
                 }
             });
 
-          new WeatherInfoMessageTask().execute();
+            new WeatherInfoMessageTask().execute();
 
 
         }
 
         private void retrieveData(DataMap dataMap) {
-             weatherImageId=dataMap.getInt(WEATHER_IMAGE_ID_KEY);
-             dateString=dataMap.getString(DATE_STRING_KEY);
-             highTemperature=dataMap.getString(WEATHER_HIGH_TEMPERATURE);
-             lowTemperature=dataMap.getString(WEATHER_LOW_TEMPERATURE);
-            Log.v(TAG, "weatherImageId"+weatherImageId);
-            Log.v(TAG, "dateString"+dateString);
-            Log.v(TAG, "highTemperature"+highTemperature);
-            Log.v(TAG, "lowTemperature"+lowTemperature);
+            weatherImageId = dataMap.getInt(WEATHER_IMAGE_ID_KEY);
+            dateString = dataMap.getString(DATE_STRING_KEY);
+            highTemperature = dataMap.getString(WEATHER_HIGH_TEMPERATURE);
+            lowTemperature = dataMap.getString(WEATHER_LOW_TEMPERATURE);
+            Log.v(TAG, "weatherImageId" + weatherImageId);
+            Log.v(TAG, "dateString" + dateString);
+            Log.v(TAG, "highTemperature" + highTemperature);
+            Log.v(TAG, "lowTemperature" + lowTemperature);
+
+            int  weatherIconID= Utils.getSmallArtResourceIdForWeatherCondition(weatherImageId);
+            mWeatherIconBitmap= BitmapFactory.decodeResource(getResources(), weatherIconID);
         }
 
         @Override
@@ -155,14 +268,14 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
 
         }
 
-        private void setUpWeathInfoProvider(){
-            Log.v(TAG,"setUpWeathInfoProvider...");
-            CapabilityApi.GetCapabilityResult result=Wearable.CapabilityApi.getCapability(mGoogleApiClient,WEATHER_INFO_CAPABILITIES,CapabilityApi.FILTER_REACHABLE).await();
+        private void setUpWeathInfoProvider() {
+            Log.v(TAG, "setUpWeathInfoProvider...");
+            CapabilityApi.GetCapabilityResult result = Wearable.CapabilityApi.getCapability(mGoogleApiClient, WEATHER_INFO_CAPABILITIES, CapabilityApi.FILTER_REACHABLE).await();
             updateWeatherInfoCapability(result.getCapability());
             requestWeatherInfo();
         }
 
-        private class WeatherInfoMessageTask extends AsyncTask<Void,Void,Void>{
+        private class WeatherInfoMessageTask extends AsyncTask<Void, Void, Void> {
             @Override
             protected Void doInBackground(Void... params) {
                 setUpWeathInfoProvider();
@@ -171,35 +284,36 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         }
 
         private void updateWeatherInfoCapability(CapabilityInfo capabilityInfo) {
-              Set<Node> connectedNodes=capabilityInfo.getNodes();
-            weatherInfoNodeId=pickBestNodeId(connectedNodes);
+            Set<Node> connectedNodes = capabilityInfo.getNodes();
+            weatherInfoNodeId = pickBestNodeId(connectedNodes);
         }
 
         private String pickBestNodeId(Set<Node> connectedNodes) {
-            String bestNodeId=null;
-            for(Node node:connectedNodes){
-                if(node.isNearby()){
+            String bestNodeId = null;
+            for (Node node : connectedNodes) {
+                if (node.isNearby()) {
                     return node.getId();
                 }
-                bestNodeId=node.getId();
+                bestNodeId = node.getId();
 
             }
             return bestNodeId;
         }
-        private void requestWeatherInfo(){
-            byte[] data=new byte[0];
-if(null!=weatherInfoNodeId){
-    Wearable.MessageApi.sendMessage(mGoogleApiClient,weatherInfoNodeId,WEATHER_INFO_PATH,data).setResultCallback(new ResultCallback<MessageApi.SendMessageResult>() {
-        @Override
-        public void onResult(@NonNull MessageApi.SendMessageResult sendMessageResult) {
-            if(sendMessageResult.getStatus().isSuccess()){
-                Log.v(TAG,"Successfully sent");
-            }else {
-                Log.v(TAG,"failed..");
+
+        private void requestWeatherInfo() {
+            byte[] data = new byte[0];
+            if (null != weatherInfoNodeId) {
+                Wearable.MessageApi.sendMessage(mGoogleApiClient, weatherInfoNodeId, WEATHER_INFO_PATH, data).setResultCallback(new ResultCallback<MessageApi.SendMessageResult>() {
+                    @Override
+                    public void onResult(@NonNull MessageApi.SendMessageResult sendMessageResult) {
+                        if (sendMessageResult.getStatus().isSuccess()) {
+                            Log.v(TAG, "Successfully sent");
+                        } else {
+                            Log.v(TAG, "failed..");
+                        }
+                    }
+                });
             }
-        }
-    });
-}
         }
 
 

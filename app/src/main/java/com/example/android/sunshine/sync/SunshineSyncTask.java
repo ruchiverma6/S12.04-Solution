@@ -210,13 +210,13 @@ public class SunshineSyncTask implements  GoogleApiClient.ConnectionCallbacks,
         double highInCelsius=0;
         double lowInCelsius=0;
         if(null!=weatherCursor && weatherCursor.moveToFirst()) {
-             weatherId = weatherCursor.getInt(MainActivity.INDEX_WEATHER_CONDITION_ID);
+            weatherImageId = weatherCursor.getInt(MainActivity.INDEX_WEATHER_CONDITION_ID);
              dateInMillis = weatherCursor.getLong(MainActivity.INDEX_WEATHER_DATE);
             highInCelsius = weatherCursor.getDouble(MainActivity.INDEX_WEATHER_MAX_TEMP);
             lowInCelsius = weatherCursor.getDouble(MainActivity.INDEX_WEATHER_MIN_TEMP);
         }
-        weatherImageId = SunshineWeatherUtils
-                .getLargeArtResourceIdForWeatherCondition(weatherId);
+       // weatherImageId = SunshineWeatherUtils
+       //         .getLargeArtResourceIdForWeatherCondition(weatherId);
 
 
 
