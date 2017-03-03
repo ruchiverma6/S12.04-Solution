@@ -1,6 +1,9 @@
 package com.example.android.sunshine;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -10,6 +13,8 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
@@ -37,6 +42,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.TimeUnit;
 
 public class AnalogWatchFaceService extends CanvasWatchFaceService {
     private static final String TAG = AnalogWatchFaceService.class.getSimpleName();
@@ -49,6 +55,10 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
     private static final String WEATHER_LOW_TEMPERATURE = "lowTemperature";
     public static final String WEATHER_INFO_CAPABILITIES = "weather_info";
     private String weatherInfoNodeId;
+    private static final long INTERACTIVE_UPDATE_RATE_MS = TimeUnit.SECONDS.toMillis(1);
+
+    private boolean mAmbient;
+    private static final int MSG_UPDATE_TIME = 0;
 
     public AnalogWatchFaceService() {
         super();
@@ -88,10 +98,21 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
             super();
         }
 
+
         @Override
         public void onAmbientModeChanged(boolean inAmbientMode) {
             super.onAmbientModeChanged(inAmbientMode);
+            mAmbient = inAmbientMode;
+            if (mAmbient) {
+                hourPaint.setAntiAlias(false);
+                datePaint.setAntiAlias(false);
+                highTempPaint.setAntiAlias(false);
+                lowTemperaturePaint.setAntiAlias(false);
+            }
             invalidate();
+
+            /* Check and trigger whether or not timer should be running (only in active mode). */
+            updateTimer();
         }
 
         @Override
@@ -102,6 +123,7 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onTimeTick() {
             super.onTimeTick();
+            invalidate();
         }
 
         @Override
@@ -112,8 +134,8 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
                     .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
                     .setShowSystemUiTime(false)
                     .build());
-            mCalendar=Calendar.getInstance();
-            mTimeZone=TimeZone.getDefault();
+            mCalendar = Calendar.getInstance();
+            mTimeZone = TimeZone.getDefault();
             mCalendar.setTimeZone(mTimeZone);
             mGoogleApiClient = new GoogleApiClient.Builder(AnalogWatchFaceService.this)
                     .addApi(Wearable.API)
@@ -121,60 +143,68 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
                     .addOnConnectionFailedListener(this)
                     .build();
             mGoogleApiClient.connect();
+            initComponents();
+
+        }
+
+        private void initComponents() {
             mBackGroundPaint = new Paint();
             backGroundColor = getResources().getColor(R.color.colorPrimaryDark);
             whiteTextColor = Color.WHITE;
             dateTextColor = Color.GRAY;
 
-            hourPaint=new Paint();
+            hourPaint = new Paint();
             hourPaint.setColor(whiteTextColor);
             hourPaint.setTypeface(Typeface.SANS_SERIF);
             hourPaint.setTextSize(getResources().getDimension(R.dimen.time_text_size));
 
-            datePaint=new Paint();
+            datePaint = new Paint();
             datePaint.setColor(whiteTextColor);
             datePaint.setTypeface(Typeface.SANS_SERIF);
             datePaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
 
-            horizontalBaseLinePaint=new Paint();
+            horizontalBaseLinePaint = new Paint();
             horizontalBaseLinePaint.setColor(whiteTextColor);
 
-            weatherIconPaint=new Paint();
-            highTempPaint=new Paint();
+            weatherIconPaint = new Paint();
+            highTempPaint = new Paint();
             highTempPaint.setColor(whiteTextColor);
             highTempPaint.setTypeface(Typeface.SANS_SERIF);
             highTempPaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
 
 
-
-            lowTemperaturePaint=new Paint();
+            lowTemperaturePaint = new Paint();
             lowTemperaturePaint.setColor(whiteTextColor);
             lowTemperaturePaint.setTypeface(Typeface.SANS_SERIF);
             lowTemperaturePaint.setTextSize(getResources().getDimension(R.dimen.date_text_size));
-            highTemperature="00"+getResources().getString(R.string.celcius);
-            lowTemperature="00"+getResources().getString(R.string.celcius);
-
+            highTemperature = "00" + getResources().getString(R.string.celcius);
+            lowTemperature = "00" + getResources().getString(R.string.celcius);
         }
 
         private void drawBackGround(Canvas canvas) {
             mBackGroundPaint.setColor(backGroundColor);
             mBackGroundPaint.setStyle(Paint.Style.FILL);
-            canvas.drawRect(0, 0, width,height,mBackGroundPaint);
-
+            canvas.drawRect(0, 0, width, height, mBackGroundPaint);
         }
-
-
-
 
 
         @Override
         public void onDestroy() {
+            mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
             super.onDestroy();
         }
 
         @Override
         public void onVisibilityChanged(boolean visible) {
             super.onVisibilityChanged(visible);
+            if (visible) {
+                registerReceiver();
+                mCalendar.setTimeZone(TimeZone.getDefault());
+                invalidate();
+            } else {
+                unregisterReceiver();
+            }
+            updateTimer();
         }
 
         @Override
@@ -185,8 +215,12 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
             super.onDraw(canvas, bounds);
+            long now = System.currentTimeMillis();
+            mCalendar.setTimeInMillis(now);
             width = bounds.width();
-            height=bounds.height();
+            height = bounds.height();
+
+
             drawBackGround(canvas);
             drawTime(canvas);
 
@@ -194,26 +228,28 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
         }
 
         private void drawTime(Canvas canvas) {
-            String time = String.format("%02d" , mCalendar.get(Calendar.HOUR_OF_DAY))+":"+
-                    String.format("%02d" , mCalendar.get(Calendar.MINUTE));
-            int centerX=width/2;
-            int centerY=height/2;
-            int xPos=centerX/2;
-            int yPos=centerY/2;
-            canvas.drawText(time,xPos,yPos,hourPaint);
-           String dayDate= getDate();
-            canvas.drawText(dayDate,xPos-20,yPos+50,datePaint);
-            canvas.drawLine(centerX-20,centerY+20,centerX+40,centerY+20,horizontalBaseLinePaint);
-            canvas.drawText(highTemperature,centerX-30,centerY+15+40,datePaint);
-            canvas.drawText(lowTemperature,centerX-30+40,centerY+15+40,datePaint);
-            if(null!=mWeatherIconBitmap) {
-                canvas.drawBitmap(mWeatherIconBitmap, centerX - 30 - mWeatherIconBitmap.getWidth(), centerY + 15, weatherIconPaint);
+            String time = String.format("%02d", mCalendar.get(Calendar.HOUR_OF_DAY)) + ":" +
+                    String.format("%02d", mCalendar.get(Calendar.MINUTE));
+            int centerX = width / 2;
+            int centerY = height / 2;
+            int xPos = centerX / 2;
+            int yPos = centerY / 2;
+            int timeYPos = yPos + 20;
+            int dateYPos = timeYPos + 50;
+            canvas.drawText(time, xPos, timeYPos, hourPaint);
+            String dayDate = getDate();
+            canvas.drawText(dayDate, xPos - 20, dateYPos, datePaint);
+            canvas.drawLine(centerX - 20, centerY + 40, centerX + 40, centerY + 40, horizontalBaseLinePaint);
+            canvas.drawText(highTemperature, centerX - 30, centerY + 35 + 55, datePaint);
+            canvas.drawText(lowTemperature, centerX - 30 + 40, centerY + 35 + 55, datePaint);
+            if (null != mWeatherIconBitmap) {
+                canvas.drawBitmap(mWeatherIconBitmap, centerX - 30 - mWeatherIconBitmap.getWidth(), centerY + 50, weatherIconPaint);
             }
         }
 
         private String getDate() {
-         Date date=   mCalendar.getTime();
-            SimpleDateFormat simpleDateFormat=new SimpleDateFormat("E, MMM d yyyy");
+            Date date = mCalendar.getTime();
+            SimpleDateFormat simpleDateFormat = new SimpleDateFormat("E, MMM d yyyy");
             String dateString = simpleDateFormat.format(date).toUpperCase();
             return dateString;
         }
@@ -221,20 +257,18 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
 
         @Override
         public void onConnected(@Nullable Bundle bundle) {
-
-
             Wearable.DataApi.addListener(mGoogleApiClient, new DataApi.DataListener() {
                 @Override
                 public void onDataChanged(DataEventBuffer dataEventBuffer) {
                     Log.v(TAG, "dataReceived 2");
                     for (DataEvent dataEvent : dataEventBuffer) {
-                        //= if (dataEvent.getType() == DataEvent.TYPE_CHANGED) {
+                         if (dataEvent.getType() == DataEvent.TYPE_CHANGED) {
                         DataItem dataItem = dataEvent.getDataItem();
                         if (dataItem.getUri().getPath().compareTo("/weatherdata") == 0) {
                             DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
                             retrieveData(dataMap);
                         }
-                        //   }
+                         }
                     }
                 }
             });
@@ -254,8 +288,8 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
             Log.v(TAG, "highTemperature" + highTemperature);
             Log.v(TAG, "lowTemperature" + lowTemperature);
 
-            int  weatherIconID= Utils.getSmallArtResourceIdForWeatherCondition(weatherImageId);
-            mWeatherIconBitmap= BitmapFactory.decodeResource(getResources(), weatherIconID);
+            int weatherIconID = Utils.getSmallArtResourceIdForWeatherCondition(weatherImageId);
+            mWeatherIconBitmap = BitmapFactory.decodeResource(getResources(), weatherIconID);
         }
 
         @Override
@@ -316,6 +350,65 @@ public class AnalogWatchFaceService extends CanvasWatchFaceService {
             }
         }
 
+        final Handler mUpdateTimeHandler = new Handler() {
+            @Override
+            public void handleMessage(Message message) {
+                switch (message.what) {
+                    case MSG_UPDATE_TIME:
+                        invalidate();
+                        if (shouldTimerBeRunning()) {
+                            long timeMs = System.currentTimeMillis();
+                            long delayMs = INTERACTIVE_UPDATE_RATE_MS
+                                    - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
+                            mUpdateTimeHandler
+                                    .sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
+                        }
+                        break;
+                }
+            }
+        };
+
+        private boolean shouldTimerBeRunning() {
+            return isVisible() && !mAmbient;
+        }
+
+        private void updateTimer() {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "updateTimer");
+            }
+            mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
+            if (shouldTimerBeRunning()) {
+                mUpdateTimeHandler.sendEmptyMessage(MSG_UPDATE_TIME);
+            }
+        }
+
+        private final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                mCalendar.setTimeZone(TimeZone.getDefault());
+                invalidate();
+            }
+        };
+
+        private void registerReceiver() {
+            if (mRegisteredTimeZoneReceiver) {
+                return;
+            }
+            mRegisteredTimeZoneReceiver = true;
+            IntentFilter filter = new IntentFilter(Intent.ACTION_TIMEZONE_CHANGED);
+            AnalogWatchFaceService.this.registerReceiver(mTimeZoneReceiver, filter);
+        }
+
+        private void unregisterReceiver() {
+            if (!mRegisteredTimeZoneReceiver) {
+                return;
+            }
+            mRegisteredTimeZoneReceiver = false;
+            AnalogWatchFaceService.this.unregisterReceiver(mTimeZoneReceiver);
+        }
+
 
     }
+
+
 }
